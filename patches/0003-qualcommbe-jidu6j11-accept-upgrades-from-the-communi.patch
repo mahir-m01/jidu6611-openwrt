@@ -1,0 +1,69 @@
+From e889a5177d2fe66bbba71ca5465b294abbaed117 Mon Sep 17 00:00:00 2001
+From: mahir-m01 <mahirabd.official@gmail.com>
+Date: Wed, 11 Nov 2026 17:47:10 +0000
+Subject: [PATCH 3/3] qualcommbe: jidu6j11: accept upgrades from the community
+ board name
+
+Community firmware for these devices uses a single generic board name,
+jiorouter,ax6000-jidu6j11, for all variants. Add it to SUPPORTED_DEVICES
+so the per-variant images pass the image metadata check when upgrading
+from that firmware with sysupgrade.
+---
+ target/linux/qualcommbe/image/ipq95xx.mk | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/target/linux/qualcommbe/image/ipq95xx.mk b/target/linux/qualcommbe/image/ipq95xx.mk
+index fa3f81ddf2..c9d551b509 100644
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -48,6 +48,7 @@ define Device/jiorouter_ax6000-jidu6111
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6111
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6111
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6111
+ 
+@@ -55,6 +56,7 @@ define Device/jiorouter_ax6000-jidu6411
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6411
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6411
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6411
+ 
+@@ -62,6 +64,7 @@ define Device/jiorouter_ax6000-jidu6611
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6611
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6611
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6611
+ 
+@@ -69,6 +72,7 @@ define Device/jiorouter_ax6000-jidu6711
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6711
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6711
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6711
+ 
+@@ -76,6 +80,7 @@ define Device/jiorouter_ax6000-jidu6811
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6811
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6811
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6811
+ 
+@@ -83,6 +88,7 @@ define Device/jiorouter_ax6000-jidu6911
+ 	$(call Device/jiorouter_ax6000-jidu6j11-common)
+ 	DEVICE_VARIANT := JIDU6911
+ 	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6911
++	SUPPORTED_DEVICES += jiorouter,ax6000-jidu6j11
+ endef
+ TARGET_DEVICES += jiorouter_ax6000-jidu6911
+ 
+-- 
+2.47.3
+

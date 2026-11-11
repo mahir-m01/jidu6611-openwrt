@@ -1,0 +1,8 @@
+CONFIG_TARGET_qualcommbe=y
+CONFIG_TARGET_qualcommbe_ipq95xx=y
+CONFIG_TARGET_qualcommbe_ipq95xx_DEVICE_jiorouter_ax6000-jidu6611=y
+CONFIG_ALL_KMODS=y
+# CONFIG_PACKAGE_kmod-pf-ring is not set
+CONFIG_PACKAGE_luci=y
+# CONFIG_PACKAGE_wpad-basic-mbedtls is not set
+CONFIG_PACKAGE_wpad-mbedtls=y

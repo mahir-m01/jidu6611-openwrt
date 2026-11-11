@@ -1,0 +1,1181 @@
+From c31a66ab96ee942821f56442730142ac74531c5a Mon Sep 17 00:00:00 2001
+From: Sahil Bakshi <sahilbakshi2001@gmail.com>
+Date: Wed, 4 Nov 2026 13:39:24 +0530
+Subject: [PATCH 1/3] qualcommbe: add JioRouter AX6000 JIDU6J11
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add support for the JioRouter AX6000 (JIDU6J11 series), based on the
+Qualcomm IPQ9554 SoC.
+
+Supported variants: JIDU6111, JIDU6411, JIDU6611, JIDU6711, JIDU6811
+and JIDU6911.
+
+All variants share one dtsi. Each has its own dts that sets the model,
+compatible and the ath11k calibration variant (JIDU<sku>, for example
+JIDU6111) used to select the board data. The variants differ in board
+data and in UART voltage (see below).
+
+| Component        | Details                                           |
+|------------------|---------------------------------------------------|
+| **SoC**          | Qualcomm IPQ9554 (4× ARM Cortex-A73 @ 1.5 GHz)    |
+| **RAM**          | 512 MB DDR4                                       |
+| **Flash**        | 256 MB SPI NAND                                   |
+| **Ethernet**     | 5× Gigabit Ethernet (1 WAN + 4 LAN, QCA8075)      |
+| **WLAN 2.4 GHz** | Integrated IPQ95XX AHB — 802.11b/g/n/ax, 4×4 MIMO |
+| **WLAN 5 GHz**   | Qualcomm QCN9074 PCIe — 802.11a/n/ac/ax, 4×4 MIMO |
+| **USB**          | 1× USB 3.0                                        |
+| **LEDs**         | 3× GPIO-controlled (Red, Green, Blue)             |
+| **Button**       | 1× Reset                                          |
+| **UART**         | 115200 8N1, see voltage table below               |
+
+**UART voltage:**
+
+| Variant                  | UART level |
+|--------------------------|------------|
+| 6111, 6411, 6611         | 3.3 V      |
+| 6711, 6811, 6911         | 1.8 V      |
+
+**MAC Addresses:**
+
+| Interface        | Source                     |
+|------------------|----------------------------|
+| WAN/Label        | ART partition, offset 0x00 |
+| LAN (all ports)  | WAN + 1                    |
+| 2.4 GHz          | WAN + 2                    |
+| 5 GHz            | WAN + 3                    |
+
+**Installation (TFTP + initramfs):**
+
+Replace <sku> with your model's variant name: jidu6111, jidu6411,
+jidu6611, jidu6711, jidu6811 or jidu6911.
+
+Before flashing, back up the stock 0:ART, MFG and 0:BDF partitions
+and save the output of U-Boot's printenv. The first sysupgrade
+overwrites the boot environment, and ART holds the MAC addresses and
+calibration data.
+
+1. Connect to the UART console at 115200 baud, using an adapter set
+   to the voltage listed above for your variant.
+2. Set up a TFTP server and interrupt U-Boot autoboot.
+3. Boot the initramfs image:
+
+   ```sh
+   setenv ipaddr 192.168.1.1
+   setenv serverip 192.168.1.2
+   tftpboot 0x44000000 openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-<sku>-initramfs-uImage.itb
+   bootm 0x44000000
+   ```
+
+4. Transfer the sysupgrade image to `/tmp` and flash:
+
+   ```sh
+   sysupgrade /tmp/openwrt-qualcommbe-ipq95xx-jiorouter_ax6000-<sku>-squashfs-sysupgrade.bin
+   ```
+
+The first sysupgrade initializes the U-Boot environment (mtdparts,
+bootcmd and bootargs) and configures NAND boot. Reverting
+to stock requires restoring the saved values.
+
+Signed-off-by: Sahil Bakshi <sahilbakshi2001@gmail.com>
+---
+ package/boot/uboot-tools/Makefile             |   2 +-
+ .../uboot-envtools/files/qualcommbe_ipq95xx   |   8 +
+ package/firmware/ipq-wifi/Makefile            |   6 +-
+ .../dts/ipq9554-jiorouter-ax6000-jidu6111.dts |  18 +
+ .../dts/ipq9554-jiorouter-ax6000-jidu6411.dts |  18 +
+ .../dts/ipq9554-jiorouter-ax6000-jidu6611.dts |  18 +
+ .../dts/ipq9554-jiorouter-ax6000-jidu6711.dts |  18 +
+ .../dts/ipq9554-jiorouter-ax6000-jidu6811.dts |  18 +
+ .../dts/ipq9554-jiorouter-ax6000-jidu6911.dts |  18 +
+ .../ipq9554-jiorouter-ax6000-jidu6j11.dtsi    | 712 ++++++++++++++++++
+ target/linux/qualcommbe/image/ipq95xx.mk      |  55 ++
+ .../ipq95xx/base-files/etc/board.d/02_network |   8 +
+ .../base-files/lib/upgrade/platform.sh        |  37 +
+ 13 files changed, 933 insertions(+), 3 deletions(-)
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6111.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6411.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6611.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6711.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6811.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6911.dts
+ create mode 100644 target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6j11.dtsi
+
+diff --git a/package/boot/uboot-tools/Makefile b/package/boot/uboot-tools/Makefile
+index 0bec0a4d53..0219fc25f2 100644
+--- a/package/boot/uboot-tools/Makefile
++++ b/package/boot/uboot-tools/Makefile
+@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_DISTNAME:=u-boot
+ PKG_VERSION:=2026.10
+-PKG_RELEASE:=3
++PKG_RELEASE:=4
+ 
+ PKG_SOURCE:=$(PKG_DISTNAME)-$(PKG_VERSION).tar.bz2
+ PKG_SOURCE_URL:= \
+diff --git a/package/boot/uboot-tools/uboot-envtools/files/qualcommbe_ipq95xx b/package/boot/uboot-tools/uboot-envtools/files/qualcommbe_ipq95xx
+index cf89850ffc..15fc055e1d 100644
+--- a/package/boot/uboot-tools/uboot-envtools/files/qualcommbe_ipq95xx
++++ b/package/boot/uboot-tools/uboot-envtools/files/qualcommbe_ipq95xx
+@@ -12,6 +12,14 @@ case "$board" in
+ askey,sbe1v1k)
+ 	ubootenv_add_mmc "0:APPSBLENV" "" "0x0" "0x40000" "0x40000"
+ 	;;
++jiorouter,ax6000-jidu6111|\
++jiorouter,ax6000-jidu6411|\
++jiorouter,ax6000-jidu6611|\
++jiorouter,ax6000-jidu6711|\
++jiorouter,ax6000-jidu6811|\
++jiorouter,ax6000-jidu6911)
++	ubootenv_add_mtd "0:APPSBLENV" "0x0" "0x40000" "0x20000"
++	;;
+ linksys,ln6001)
+ 	ubootenv_add_mmc "u_env" "" "0x0" "0x40000" "0x40000"
+ 	;;
+diff --git a/package/firmware/ipq-wifi/Makefile b/package/firmware/ipq-wifi/Makefile
+index a1eb14e775..d12545abcf 100644
+--- a/package/firmware/ipq-wifi/Makefile
++++ b/package/firmware/ipq-wifi/Makefile
+@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
+ include $(INCLUDE_DIR)/version.mk
+ 
+ PKG_NAME:=ipq-wifi
+-PKG_RELEASE:=1
++PKG_RELEASE:=2
+ 
+ PKG_SOURCE_PROTO:=git
+ PKG_SOURCE_URL=$(PROJECT_GIT)/project/firmware/qca-wireless.git
+@@ -53,6 +53,7 @@ ALLWIFIBOARDS:= \
+ 	iodata_wn-dax3000gr \
+ 	jdcloud_re-cs-02 \
+ 	jdcloud_re-ss-01 \
++	jiorouter_ax6000-jidu6j11 \
+ 	link_nn6000 \
+ 	linksys_homewrk \
+ 	linksys_mr2000 \
+@@ -240,7 +241,7 @@ endef
+ # 2. Add $(eval $(call generate-ipq-wifi-package,<devicename>,<display name>))
+ #
+ # Board files should follow this name structure:
+-#   board-<devicename>.<qca4019|qca9888|qca9889|qca9984|qca99x0|ipq6018|ipq8074>
++#   board-<devicename>.<qca4019|qca9888|qcn9074|qca9889|qca9984|qca99x0|ipq6018|ipq8074|ipq9574>
+ 
+ $(eval $(call generate-ipq-wifi-package,8devices_kiwi,8devices Kiwi))
+ $(eval $(call generate-ipq-wifi-package,8devices_mango,8devices Mango))
+@@ -268,6 +269,7 @@ $(eval $(call generate-ipq-wifi-package,ignitenet_ss-w2-ac2600,Ignitenet SS-W2-A
+ $(eval $(call generate-ipq-wifi-package,iodata_wn-dax3000gr,I-O DATA WN-DAX3000GR))
+ $(eval $(call generate-ipq-wifi-package,jdcloud_re-cs-02,JDCloud RE-CS-02))
+ $(eval $(call generate-ipq-wifi-package,jdcloud_re-ss-01,JDCloud RE-SS-01))
++$(eval $(call generate-ipq-wifi-package,jiorouter_ax6000-jidu6j11,JioRouter AX6000 JIDU6J11))
+ $(eval $(call generate-ipq-wifi-package,link_nn6000,Link NN6000))
+ $(eval $(call generate-ipq-wifi-package,linksys_homewrk,Linksys HomeWRK))
+ $(eval $(call generate-ipq-wifi-package,linksys_mr2000,Linksys MR2000))
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6111.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6111.dts
+new file mode 100644
+index 0000000000..8660e8d6f2
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6111.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6111";
++	compatible = "jiorouter,ax6000-jidu6111", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6111";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6111";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6411.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6411.dts
+new file mode 100644
+index 0000000000..ad106b2a53
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6411.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6411";
++	compatible = "jiorouter,ax6000-jidu6411", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6411";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6411";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6611.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6611.dts
+new file mode 100644
+index 0000000000..e9a22a14a0
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6611.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6611";
++	compatible = "jiorouter,ax6000-jidu6611", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6611";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6611";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6711.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6711.dts
+new file mode 100644
+index 0000000000..ce829c8796
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6711.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6711";
++	compatible = "jiorouter,ax6000-jidu6711", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6711";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6711";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6811.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6811.dts
+new file mode 100644
+index 0000000000..6b7006611d
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6811.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6811";
++	compatible = "jiorouter,ax6000-jidu6811", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6811";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6811";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6911.dts b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6911.dts
+new file mode 100644
+index 0000000000..5b04e02b48
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6911.dts
+@@ -0,0 +1,18 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++/dts-v1/;
++
++#include "ipq9554-jiorouter-ax6000-jidu6j11.dtsi"
++
++/ {
++	model = "JioRouter AX6000 JIDU6911";
++	compatible = "jiorouter,ax6000-jidu6911", "qcom,ipq9574";
++};
++
++&wifi0 {
++	qcom,ath11k-calibration-variant = "JIDU6911";
++};
++
++&wifi1 {
++	qcom,ath11k-calibration-variant = "JIDU6911";
++};
+diff --git a/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6j11.dtsi b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6j11.dtsi
+new file mode 100644
+index 0000000000..f4e83fe4a5
+--- /dev/null
++++ b/target/linux/qualcommbe/dts/ipq9554-jiorouter-ax6000-jidu6j11.dtsi
+@@ -0,0 +1,712 @@
++// SPDX-License-Identifier: (GPL-2.0 OR MIT)
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/leds/common.h>
++
++#include "ipq9574.dtsi"
++
++/ {
++	aliases {
++		serial0 = &blsp1_uart2;
++		led-boot = &led_red;
++		led-failsafe = &led_red;
++		led-running = &led_green;
++		led-upgrade = &led_blue;
++	};
++
++	chosen {
++		stdout-path = "serial0:115200n8";
++	};
++
++	memory@40000000 {
++		device_type = "memory";
++		reg = <0x0 0x40000000 0x0 0x20000000>;
++	};
++
++	gpio-keys {
++		compatible = "gpio-keys";
++		pinctrl-0 = <&gpio_keys_default>;
++		pinctrl-names = "default";
++
++		button-reset {
++			label = "reset";
++			linux,code = <KEY_RESTART>;
++			gpios = <&tlmm 10 GPIO_ACTIVE_LOW>;
++		};
++	};
++
++	leds {
++		compatible = "gpio-leds";
++		pinctrl-0 = <&gpio_leds_default>;
++		pinctrl-names = "default";
++
++		led_red: led-0 {
++			color = <LED_COLOR_ID_RED>;
++			function = LED_FUNCTION_STATUS;
++			gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
++			default-state = "on";
++		};
++
++		led_green: led-1 {
++			color = <LED_COLOR_ID_GREEN>;
++			function = LED_FUNCTION_STATUS;
++			gpios = <&tlmm 16 GPIO_ACTIVE_HIGH>;
++		};
++
++		led_blue: led-2 {
++			color = <LED_COLOR_ID_BLUE>;
++			function = LED_FUNCTION_STATUS;
++			gpios = <&tlmm 17 GPIO_ACTIVE_HIGH>;
++		};
++	};
++
++	/*
++	 * The RPM MP5496 s1 rail (variable, 725-1075 mV) that the SoC dtsi's
++	 * CPU OPP table expects is not exposed on this board: &rpm is disabled
++	 * in hardware and in stock firmware, so VDD_CPU is a fixed 1.075 V
++	 * supply.
++	 */
++	ipq9574_s1: regulator-cpu {
++		compatible = "regulator-fixed";
++		regulator-min-microvolt = <1075000>;
++		regulator-max-microvolt = <1075000>;
++		regulator-boot-on;
++		regulator-always-on;
++		regulator-name = "cpu-vdd";
++	};
++
++	vdd_3p3: regulator-3p3 {
++		compatible = "regulator-fixed";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		regulator-boot-on;
++		regulator-always-on;
++		regulator-name = "fixed_3p3";
++	};
++
++	vdd_0p925: regulator-0p925 {
++		compatible = "regulator-fixed";
++		regulator-min-microvolt = <925000>;
++		regulator-max-microvolt = <925000>;
++		regulator-boot-on;
++		regulator-always-on;
++		regulator-name = "fixed_0p925";
++	};
++
++	/*
++	 * 1.8 V USB PHY PLL supply, fed from the fixed 3.3 V rail. There is
++	 * no RPM l5 regulator on this board to use instead.
++	 */
++	vdd_usb_phy: vdd-usb-phy {
++		compatible = "regulator-fixed";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		regulator-boot-on;
++		regulator-always-on;
++		vin-supply = <&vdd_3p3>;
++		regulator-name = "vdd_usb_phy";
++	};
++};
++
++/*
++ * The CPU supply is a fixed 1.075 V regulator, so pin every OPP to that
++ * voltage instead of letting the OPP layer try to program 725-1062 mV into
++ * a regulator that cannot vary.
++ */
++&cpu_opp_table {
++	opp-936000000 {
++		opp-microvolt = <1075000>;
++	};
++
++	opp-1104000000 {
++		opp-microvolt = <1075000>;
++	};
++
++	opp-1200000000 {
++		opp-microvolt = <1075000>;
++	};
++
++	opp-1416000000 {
++		opp-microvolt = <1075000>;
++	};
++
++	opp-1488000000 {
++		opp-microvolt = <1075000>;
++	};
++};
++
++&blsp1_uart2 {
++	pinctrl-0 = <&uart2_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++/*
++ * The QCE crypto engine has no driver (CRYPTO_DEV_QCE is disabled and
++ * upstream marked it BROKEN). The SoC dtsi enables it by default, which
++ * leaves gcc-ipq9574's interconnect sync_state() pending forever and keeps
++ * bandwidth votes at their boot-time maximum.
++ */
++&crypto {
++	status = "disabled";
++};
++
++&cryptobam {
++	status = "disabled";
++};
++
++&rpm {
++	status = "disabled";
++};
++
++&qcom_ppe {
++	assigned-clocks = <&nsscc NSS_CC_PORT1_RX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT1_TX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT2_RX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT2_TX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT3_RX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT3_TX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT4_RX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT4_TX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT5_RX_CLK_SRC>,
++			   <&nsscc NSS_CC_PORT5_TX_CLK_SRC>;
++
++	assigned-clock-rates = <125000000>, <125000000>, <125000000>,
++			       <125000000>, <125000000>, <125000000>,
++			       <125000000>, <125000000>, <125000000>,
++			       <125000000>;
++
++	ethernet-ports {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		wan: port@1 {
++			reg = <1>;
++			label = "wan";
++			phy-mode = "psgmii";
++			managed = "in-band-status";
++			nvmem-cells = <&base_mac 0>;
++			nvmem-cell-names = "mac-address";
++			phy-handle = <&qca8075_0>;
++			pcs-handle = <&pcs0_ch0>;
++			clocks = <&nsscc NSS_CC_PORT1_MAC_CLK>,
++				 <&nsscc NSS_CC_PORT1_RX_CLK>,
++				 <&nsscc NSS_CC_PORT1_TX_CLK>;
++			clock-names = "mac",
++				      "rx",
++				      "tx";
++			resets = <&nsscc PORT1_MAC_ARES>,
++				 <&nsscc PORT1_RX_ARES>,
++				 <&nsscc PORT1_TX_ARES>;
++			reset-names = "mac",
++				      "rx",
++				      "tx";
++		};
++
++		lan1: port@2 {
++			reg = <2>;
++			label = "lan1";
++			phy-mode = "psgmii";
++			managed = "in-band-status";
++			nvmem-cells = <&base_mac 1>;
++			nvmem-cell-names = "mac-address";
++			phy-handle = <&qca8075_1>;
++			pcs-handle = <&pcs0_ch1>;
++			clocks = <&nsscc NSS_CC_PORT2_MAC_CLK>,
++				 <&nsscc NSS_CC_PORT2_RX_CLK>,
++				 <&nsscc NSS_CC_PORT2_TX_CLK>;
++			clock-names = "mac",
++				      "rx",
++				      "tx";
++			resets = <&nsscc PORT2_MAC_ARES>,
++				 <&nsscc PORT2_RX_ARES>,
++				 <&nsscc PORT2_TX_ARES>;
++			reset-names = "mac",
++				      "rx",
++				      "tx";
++		};
++
++		lan2: port@3 {
++			reg = <3>;
++			label = "lan2";
++			phy-mode = "psgmii";
++			managed = "in-band-status";
++			nvmem-cells = <&base_mac 1>;
++			nvmem-cell-names = "mac-address";
++			phy-handle = <&qca8075_2>;
++			pcs-handle = <&pcs0_ch2>;
++			clocks = <&nsscc NSS_CC_PORT3_MAC_CLK>,
++				 <&nsscc NSS_CC_PORT3_RX_CLK>,
++				 <&nsscc NSS_CC_PORT3_TX_CLK>;
++			clock-names = "mac",
++				      "rx",
++				      "tx";
++			resets = <&nsscc PORT3_MAC_ARES>,
++				 <&nsscc PORT3_RX_ARES>,
++				 <&nsscc PORT3_TX_ARES>;
++			reset-names = "mac",
++				      "rx",
++				      "tx";
++		};
++
++		lan3: port@4 {
++			reg = <4>;
++			label = "lan3";
++			phy-mode = "psgmii";
++			managed = "in-band-status";
++			nvmem-cells = <&base_mac 1>;
++			nvmem-cell-names = "mac-address";
++			phy-handle = <&qca8075_3>;
++			pcs-handle = <&pcs0_ch3>;
++			clocks = <&nsscc NSS_CC_PORT4_MAC_CLK>,
++				 <&nsscc NSS_CC_PORT4_RX_CLK>,
++				 <&nsscc NSS_CC_PORT4_TX_CLK>;
++			clock-names = "mac",
++				      "rx",
++				      "tx";
++			resets = <&nsscc PORT4_MAC_ARES>,
++				 <&nsscc PORT4_RX_ARES>,
++				 <&nsscc PORT4_TX_ARES>;
++			reset-names = "mac",
++				      "rx",
++				      "tx";
++		};
++
++		lan4: port@5 {
++			reg = <5>;
++			label = "lan4";
++			phy-mode = "psgmii";
++			managed = "in-band-status";
++			nvmem-cells = <&base_mac 1>;
++			nvmem-cell-names = "mac-address";
++			phy-handle = <&qca8075_4>;
++			pcs-handle = <&pcs0_ch4>;
++			clocks = <&nsscc NSS_CC_PORT5_MAC_CLK>,
++				 <&nsscc NSS_CC_PORT5_RX_CLK>,
++				 <&nsscc NSS_CC_PORT5_TX_CLK>;
++			clock-names = "mac",
++				      "rx",
++				      "tx";
++			resets = <&nsscc PORT5_MAC_ARES>,
++				 <&nsscc PORT5_RX_ARES>,
++				 <&nsscc PORT5_TX_ARES>;
++			reset-names = "mac",
++				      "rx",
++				      "tx";
++		};
++	};
++};
++
++&mdio {
++	status = "okay";
++	reset-gpios = <&tlmm 60 GPIO_ACTIVE_LOW>;
++
++	ethernet-phy-package@10 {
++		compatible = "qcom,qca8075-package";
++		reg = <0x10>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		qca8075_0: ethernet-phy@10 {
++			reg = <0x10>;
++		};
++
++		qca8075_1: ethernet-phy@11 {
++			reg = <0x11>;
++		};
++
++		qca8075_2: ethernet-phy@12 {
++			reg = <0x12>;
++		};
++
++		qca8075_3: ethernet-phy@13 {
++			reg = <0x13>;
++		};
++
++		qca8075_4: ethernet-phy@14 {
++			reg = <0x14>;
++		};
++	};
++};
++
++&pcs0 {
++	pcs0_ch4: pcs-mii@4 {
++		reg = <4>;
++		clocks = <&nsscc NSS_CC_UNIPHY_PORT5_RX_CLK>,
++			 <&nsscc NSS_CC_UNIPHY_PORT5_TX_CLK>;
++		clock-names = "rx", "tx";
++	};
++};
++
++&pcs1 {
++	status = "disabled";
++};
++
++&pcs2 {
++	status = "disabled";
++};
++
++&pcie1_phy {
++	status = "okay";
++};
++
++&pcie1 {
++	pinctrl-0 = <&pcie_qcn9074_pins>;
++	pinctrl-names = "default";
++	perst-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	pcie@0 {
++		device_type = "pci";
++		reg = <0x0 0x0 0x0 0x0 0x0>;
++		bus-range = <0x01 0xff>;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi1: wifi@0,0 {
++			compatible = "pci17cb,1104";
++			reg = <0x00010000 0 0 0 0>;
++			qcom,ath11k-fw-memory-mode = <2>;
++			nvmem-cells = <&cal_pci>, <&base_mac 3>;
++			nvmem-cell-names = "calibration", "mac-address";
++		};
++	};
++};
++
++&qpic_bam {
++	status = "okay";
++};
++
++&qpic_nand {
++	pinctrl-0 = <&qpic_snand_default_state>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	flash@0 {
++		compatible = "spi-nand";
++		reg = <0>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		nand-ecc-engine = <&qpic_nand>;
++
++		partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			partition@0 {
++				label = "0:SBL1";
++				reg = <0x00000000 0x00180000>;
++				read-only;
++			};
++
++			partition@180000 {
++				label = "0:SBL1_1";
++				reg = <0x00180000 0x00180000>;
++				read-only;
++			};
++
++			partition@300000 {
++				label = "0:MIBIB";
++				reg = <0x00300000 0x00100000>;
++				read-only;
++			};
++
++			partition@400000 {
++				label = "0:BOOTCONFIG";
++				reg = <0x00400000 0x00080000>;
++				read-only;
++			};
++
++			partition@480000 {
++				label = "0:BOOTCONFIG1";
++				reg = <0x00480000 0x00080000>;
++				read-only;
++			};
++
++			partition@500000 {
++				label = "0:QSEE";
++				reg = <0x00500000 0x00380000>;
++				read-only;
++			};
++
++			partition@880000 {
++				label = "0:QSEE_1";
++				reg = <0x00880000 0x00380000>;
++				read-only;
++			};
++
++			partition@c00000 {
++				label = "0:DEVCFG_1";
++				reg = <0x00c00000 0x00080000>;
++				read-only;
++			};
++
++			partition@c80000 {
++				label = "0:DEVCFG";
++				reg = <0x00c80000 0x00080000>;
++				read-only;
++			};
++
++			partition@d00000 {
++				label = "0:APDP_1";
++				reg = <0x00d00000 0x00080000>;
++				read-only;
++			};
++
++			partition@d80000 {
++				label = "0:APDP";
++				reg = <0x00d80000 0x00080000>;
++				read-only;
++			};
++
++			partition@e00000 {
++				label = "0:TME";
++				reg = <0x00e00000 0x00080000>;
++				read-only;
++			};
++
++			partition@e80000 {
++				label = "0:TME_1";
++				reg = <0x00e80000 0x00080000>;
++				read-only;
++			};
++
++			partition@f00000 {
++				label = "0:RPM_1";
++				reg = <0x00f00000 0x00080000>;
++				read-only;
++			};
++
++			partition@f80000 {
++				label = "0:RPM";
++				reg = <0x00f80000 0x00080000>;
++				read-only;
++			};
++
++			partition@1000000 {
++				label = "0:CDT_1";
++				reg = <0x01000000 0x00080000>;
++				read-only;
++			};
++
++			partition@1080000 {
++				label = "0:CDT";
++				reg = <0x01080000 0x00080000>;
++				read-only;
++			};
++
++			partition@1100000 {
++				label = "0:APPSBLENV";
++				reg = <0x01100000 0x00080000>;
++			};
++
++			partition@1180000 {
++				label = "0:APPSBL_1";
++				reg = <0x01180000 0x00180000>;
++				read-only;
++			};
++
++			partition@1300000 {
++				label = "0:APPSBL";
++				reg = <0x01300000 0x00180000>;
++				read-only;
++			};
++
++			partition@1480000 {
++				label = "0:ART";
++				reg = <0x01480000 0x00100000>;
++				read-only;
++
++				nvmem-layout {
++					compatible = "fixed-layout";
++					#address-cells = <1>;
++					#size-cells = <1>;
++
++					base_mac: base-mac@0 {
++						compatible = "mac-base";
++						reg = <0x0 0x6>;
++						#nvmem-cell-cells = <1>;
++					};
++
++					cal_ahb: calibration@1000 {
++						reg = <0x1000 0x20000>;
++					};
++
++					cal_pci: calibration@4c000 {
++						reg = <0x4c000 0x20000>;
++					};
++				};
++			};
++
++			partition@1580000 {
++				label = "0:ETHPHYFW";
++				reg = <0x01580000 0x00100000>;
++				read-only;
++			};
++
++			partition@1680000 {
++				label = "0:TRAINING";
++				reg = <0x01680000 0x00080000>;
++				read-only;
++			};
++
++			partition@1700000 {
++				label = "ubi";
++				reg = <0x01700000 0x0e100000>;
++			};
++
++			partition@f800000 {
++				label = "Jio-Reserved";
++				reg = <0x0f800000 0x00200000>;
++				read-only;
++			};
++
++			partition@fa00000 {
++				label = "MFG";
++				reg = <0x0fa00000 0x00200000>;
++				read-only;
++			};
++
++			partition@fc00000 {
++				label = "0:BDF";
++				reg = <0x0fc00000 0x00200000>;
++				read-only;
++			};
++		};
++	};
++};
++
++&sleep_clk {
++	clock-frequency = <32000>;
++};
++
++&tlmm {
++	gpio_keys_default: gpio-keys-default-state {
++		pins = "gpio10";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++	};
++
++	gpio_leds_default: gpio-leds-default-state {
++		pins = "gpio6", "gpio16", "gpio17";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++	};
++
++	qpic_snand_default_state: qpic-snand-default-state {
++		clock-pins {
++			pins = "gpio5";
++			function = "qspi_clk";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		cs-pins {
++			pins = "gpio4";
++			function = "qspi_cs";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data-pins {
++			pins = "gpio0", "gpio1", "gpio2", "gpio3";
++			function = "qspi_data";
++			drive-strength = <8>;
++			bias-disable;
++		};
++	};
++
++	/* PCIe 1 (QCN9074 5GHz) */
++	pcie_qcn9074_pins: pcie-qcn9074-state {
++		clkreq-n-pins {
++			pins = "gpio25";
++			function = "pcie1_clk";
++			drive-strength = <6>;
++			bias-pull-up;
++		};
++
++		perst-n-pins {
++			pins = "gpio26";
++			function = "gpio";
++			drive-strength = <8>;
++			bias-pull-up;
++			output-low;
++		};
++
++		wake-n-pins {
++			pins = "gpio27";
++			function = "pcie1_wake";
++			drive-strength = <6>;
++			bias-pull-up;
++		};
++	};
++
++	usb_supply_pin: usb-supply-pin {
++		pins = "gpio64";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-pull-up;
++		output-high;
++	};
++};
++
++&usb_0_dwc3 {
++	dr_mode = "host";
++};
++
++&usb_0_qmpphy {
++	vdda-pll-supply = <&vdd_usb_phy>;
++	vdda-phy-supply = <&vdd_0p925>;
++	status = "okay";
++};
++
++&usb_0_qusbphy {
++	vdd-supply = <&vdd_0p925>;
++	vdda-pll-supply = <&vdd_usb_phy>;
++	vdda-phy-dpdm-supply = <&vdd_3p3>;
++	status = "okay";
++};
++
++&usb3 {
++	pinctrl-0 = <&usb_supply_pin>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++/*
++ * The bootstrap pins for this board select a 24 MHz XO, so the WiFi
++ * reference output is multiplied by 2 to reach 48 MHz (other IPQ9574 boards
++ * use a 48 MHz XO with x1).
++ */
++&ref_48mhz_clk {
++	clock-div = <1>;
++	clock-mult = <2>;
++};
++
++&xo_board_clk {
++	clock-div = <2>;
++	clock-mult = <1>;
++};
++
++&xo_clk {
++	clock-frequency = <24000000>;
++};
++
++&wifi0 {
++	qcom,ath11k-fw-memory-mode = <2>;
++	nvmem-cells = <&cal_ahb>, <&base_mac 2>;
++	nvmem-cell-names = "calibration", "mac-address";
++	clocks = <&xo_board_clk>;
++	clock-names = "xo";
++	status = "okay";
++};
++
++&q6v5_wcss {
++	status = "okay";
++};
+diff --git a/target/linux/qualcommbe/image/ipq95xx.mk b/target/linux/qualcommbe/image/ipq95xx.mk
+index 9e9c9561a0..fa3f81ddf2 100644
+--- a/target/linux/qualcommbe/image/ipq95xx.mk
++++ b/target/linux/qualcommbe/image/ipq95xx.mk
+@@ -31,6 +31,61 @@ define Device/askey_sbe1v1k
+ endef
+ TARGET_DEVICES += askey_sbe1v1k
+ 
++define Device/jiorouter_ax6000-jidu6j11-common
++	$(call Device/FitImage)
++	$(call Device/UbiFit)
++	DEVICE_VENDOR := JioRouter
++	DEVICE_MODEL := AX6000
++	SOC := ipq9554
++	BLOCKSIZE := 128k
++	PAGESIZE := 2048
++	DEVICE_PACKAGES := kmod-ath11k-ahb kmod-ath11k-pci \
++		ath11k-firmware-ipq9574 ath11k-firmware-qcn9074 \
++		ipq-wifi-jiorouter_ax6000-jidu6j11
++endef
++
++define Device/jiorouter_ax6000-jidu6111
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6111
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6111
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6111
++
++define Device/jiorouter_ax6000-jidu6411
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6411
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6411
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6411
++
++define Device/jiorouter_ax6000-jidu6611
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6611
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6611
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6611
++
++define Device/jiorouter_ax6000-jidu6711
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6711
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6711
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6711
++
++define Device/jiorouter_ax6000-jidu6811
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6811
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6811
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6811
++
++define Device/jiorouter_ax6000-jidu6911
++	$(call Device/jiorouter_ax6000-jidu6j11-common)
++	DEVICE_VARIANT := JIDU6911
++	DEVICE_DTS := ipq9554-jiorouter-ax6000-jidu6911
++endef
++TARGET_DEVICES += jiorouter_ax6000-jidu6911
++
+ define Device/linksys_ln6001
+ 	$(call Device/FitImage)
+ 	DEVICE_VENDOR := Linksys
+diff --git a/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network b/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network
+index 1ab91adc48..7d401e5dab 100644
+--- a/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network
++++ b/target/linux/qualcommbe/ipq95xx/base-files/etc/board.d/02_network
+@@ -17,6 +17,14 @@ ipq95xx_setup_interfaces()
+ 	askey,sbe1v1k)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
+ 		;;
++	jiorouter,ax6000-jidu6111|\
++	jiorouter,ax6000-jidu6411|\
++	jiorouter,ax6000-jidu6611|\
++	jiorouter,ax6000-jidu6711|\
++	jiorouter,ax6000-jidu6811|\
++	jiorouter,ax6000-jidu6911)
++		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
++		;;
+ 	linksys,ln6001)
+ 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+ 		;;
+diff --git a/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh b/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh
+index 5c1a014ff9..9e32d272ef 100644
+--- a/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh
++++ b/target/linux/qualcommbe/ipq95xx/base-files/lib/upgrade/platform.sh
+@@ -4,8 +4,35 @@ REQUIRE_IMAGE_METADATA=1
+ RAMFS_COPY_BIN='fw_printenv fw_setenv head cmp sha256sum tr mktemp'
+ RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
+ 
++jiorouter_initial_setup() {
++	[ "$(rootfs_type)" = "tmpfs" ] || return 0
++
++	local mtdnum="$(find_mtd_index 0:APPSBLENV)"
++	if [ ! "$mtdnum" ]; then
++		echo "unable to find mtd partition 0:APPSBLENV"
++		return 1
++	fi
++
++	echo "/dev/mtd$mtdnum 0x0 0x40000 0x20000" > /etc/fw_env.config
++
++	# Set up U-Boot environment to boot OpenWrt
++	fw_setenv mtdids 'nand0=nand0' || return 1
++	fw_setenv mtdparts 'mtdparts=nand0:0xe100000@0x1700000(ubi)' || return 1
++	fw_setenv bootcmd 'ubi part ubi; ubi read 0x44000000 kernel; bootm 0x44000000' || return 1
++	fw_setenv bootargs 'console=ttyMSM0,115200n8 ubi.mtd=ubi root=/dev/ubiblock0_1 rootfstype=squashfs' || return 1
++}
++
+ platform_check_image() {
+ 	case "$(board_name)" in
++	jiorouter,ax6000-jidu6111|\
++	jiorouter,ax6000-jidu6411|\
++	jiorouter,ax6000-jidu6611|\
++	jiorouter,ax6000-jidu6711|\
++	jiorouter,ax6000-jidu6811|\
++	jiorouter,ax6000-jidu6911)
++		nand_do_platform_check "$(board_name)" "$1"
++		return $?
++		;;
+ 	linksys,ln6001)
+ 		ln6001_preflight "$1" || {
+ 			echo "LN6001 A/B preflight failed" >&2
+@@ -32,6 +59,16 @@ platform_do_upgrade() {
+ 		CI_DATAPART="rootfs_data"
+ 		emmc_do_upgrade "$1"
+ 		;;
++	jiorouter,ax6000-jidu6111|\
++	jiorouter,ax6000-jidu6411|\
++	jiorouter,ax6000-jidu6611|\
++	jiorouter,ax6000-jidu6711|\
++	jiorouter,ax6000-jidu6811|\
++	jiorouter,ax6000-jidu6911)
++		jiorouter_initial_setup || return 1
++		CI_UBIPART="ubi"
++		nand_do_upgrade "$1"
++		;;
+ 	linksys,ln6001)
+ 		ln6001_do_upgrade "$1" || return 1
+ 		;;
+-- 
+2.47.3
+

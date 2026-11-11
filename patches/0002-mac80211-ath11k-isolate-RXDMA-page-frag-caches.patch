@@ -1,0 +1,285 @@
+From aac48c4eeaa0f7cec6c582f6ceae45d9aa99272c Mon Sep 17 00:00:00 2001
+From: mahir-m01 <mahirabd.official@gmail.com>
+Date: Wed, 11 Nov 2026 17:47:10 +0000
+Subject: [PATCH 2/3] mac80211: ath11k: isolate RXDMA page-frag caches
+
+Carry the two ath11k patches from openwrt/openwrt#24254 by Mark Ruvald
+Pedersen, which give each RXDMA ring its own page_frag_cache and make
+external IRQ enable/disable idempotent. This bounds the RX page-frag
+memory growth that otherwise accumulates under normal traffic on
+ath11k AHB and PCI devices.
+
+Changes against the upstream pull request:
+- renumbered 950/951 to 960/961, as 950-953 are now used in main
+- refreshed the include context in 961 for backports-7.2, where
+  dp_rx.c includes <linux/fips.h> instead of <crypto/hash.h>
+
+Link: https://github.com/openwrt/openwrt/pull/24254
+---
+ ...make-external-IRQ-control-idempotent.patch |  74 ++++++++
+ ...e-private-page-frag-caches-for-rxdma.patch | 172 ++++++++++++++++++
+ 2 files changed, 246 insertions(+)
+ create mode 100644 package/kernel/mac80211/patches/ath11k/960-wifi-ath11k-make-external-IRQ-control-idempotent.patch
+ create mode 100644 package/kernel/mac80211/patches/ath11k/961-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch
+
+diff --git a/package/kernel/mac80211/patches/ath11k/960-wifi-ath11k-make-external-IRQ-control-idempotent.patch b/package/kernel/mac80211/patches/ath11k/960-wifi-ath11k-make-external-IRQ-control-idempotent.patch
+new file mode 100644
+index 0000000000..b3e52e1a4c
+--- /dev/null
++++ b/package/kernel/mac80211/patches/ath11k/960-wifi-ath11k-make-external-IRQ-control-idempotent.patch
+@@ -0,0 +1,74 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Mark Ruvald Pedersen <wabsie@gmail.com>
++Date: Wed, 15 Jul 2026 22:29:00 +0200
++Subject: [PATCH] wifi: ath11k: make external IRQ control idempotent
++
++ath11k tracks each external IRQ group's lifecycle state with
++napi_enabled, but calls the physical IRQ enable and disable helpers
++outside the state guards.  Repeating a lifecycle disable therefore
++increments Linux's IRQ disable depth on AHB and multi-MSI PCI even though
++NAPI is already disabled.  A single later enable leaves the IRQ masked.
++
++Make the physical group transitions part of the existing NAPI
++state transitions.  Preserve the required ordering: mask IRQs before
++synchronizing and disabling NAPI, then enable NAPI before unmasking IRQs.
++Keep the outer synchronize_irq() calls unchanged.
++
++This makes sequential lifecycle transitions idempotent without affecting
++the temporary interrupt-handler and NAPI-poll disable/enable pairing.
++
++Signed-off-by: Mark Ruvald Pedersen <wabsie@gmail.com>
++---
++ drivers/net/wireless/ath/ath11k/ahb.c  | 6 +++---
++ drivers/net/wireless/ath/ath11k/pcic.c | 6 +++---
++ 2 files changed, 6 insertions(+), 6 deletions(-)
++
++--- a/drivers/net/wireless/ath/ath11k/ahb.c
+++++ b/drivers/net/wireless/ath/ath11k/ahb.c
++@@ -244,9 +244,9 @@ static void __ath11k_ahb_ext_irq_disable(struct ath11k_base *ab)
++ 	for (i = 0; i < ATH11K_EXT_IRQ_GRP_NUM_MAX; i++) {
++ 		struct ath11k_ext_irq_grp *irq_grp = &ab->ext_irq_grp[i];
++ 
++-		ath11k_ahb_ext_grp_disable(irq_grp);
++-
++ 		if (irq_grp->napi_enabled) {
+++			ath11k_ahb_ext_grp_disable(irq_grp);
+++
++ 			napi_synchronize(&irq_grp->napi);
++ 			napi_disable(&irq_grp->napi);
++ 			irq_grp->napi_enabled = false;
++@@ -389,8 +389,8 @@ static void ath11k_ahb_ext_irq_enable(struct ath11k_base *ab)
++ 		if (!irq_grp->napi_enabled) {
++ 			napi_enable(&irq_grp->napi);
++ 			irq_grp->napi_enabled = true;
+++			ath11k_ahb_ext_grp_enable(irq_grp);
++ 		}
++-		ath11k_ahb_ext_grp_enable(irq_grp);
++ 	}
++ }
++ 
++
++--- a/drivers/net/wireless/ath/ath11k/pcic.c
+++++ b/drivers/net/wireless/ath/ath11k/pcic.c
++@@ -465,9 +465,9 @@ static void __ath11k_pcic_ext_irq_disable(struct ath11k_base *ab)
++ 	for (i = 0; i < ATH11K_EXT_IRQ_GRP_NUM_MAX; i++) {
++ 		struct ath11k_ext_irq_grp *irq_grp = &ab->ext_irq_grp[i];
++ 
++-		ath11k_pcic_ext_grp_disable(irq_grp);
++-
++ 		if (irq_grp->napi_enabled) {
+++			ath11k_pcic_ext_grp_disable(irq_grp);
+++
++ 			napi_synchronize(&irq_grp->napi);
++ 			napi_disable(&irq_grp->napi);
++ 			irq_grp->napi_enabled = false;
++@@ -500,8 +500,8 @@ void ath11k_pcic_ext_irq_enable(struct ath11k_base *ab)
++ 		if (!irq_grp->napi_enabled) {
++ 			napi_enable(&irq_grp->napi);
++ 			irq_grp->napi_enabled = true;
+++			ath11k_pcic_ext_grp_enable(irq_grp);
++ 		}
++-		ath11k_pcic_ext_grp_enable(irq_grp);
++ 	}
++ 
++ 	set_bit(ATH11K_FLAG_EXT_IRQ_ENABLED, &ab->dev_flags);
+diff --git a/package/kernel/mac80211/patches/ath11k/961-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch b/package/kernel/mac80211/patches/ath11k/961-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch
+new file mode 100644
+index 0000000000..fa6154892f
+--- /dev/null
++++ b/package/kernel/mac80211/patches/ath11k/961-wifi-ath11k-use-private-page-frag-caches-for-rxdma.patch
+@@ -0,0 +1,172 @@
++From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
++From: Mark Ruvald Pedersen <wabsie@gmail.com>
++Date: Wed, 15 Jul 2026 22:30:00 +0200
++Subject: [PATCH] wifi: ath11k: use private page frag caches for RXDMA rings
++
++ath11k allocates RXDMA skb heads with dev_alloc_skb(), which draws from a
++shared per-CPU page_frag cache.  Two ownership captures found bounded ring
++and IDR occupancy while page-frag backing grew, and found current or
++historical cross-origin fragments on 86-87% of the final tracker-visible
++physical pages.  This lifetime mixing can retain sparsely occupied
++high-order pages even though logical buffer ownership remains bounded.
++
++Give each RXDMA ring its own page_frag cache and allocate both regular RX
++and monitor-status skb heads from it.  New fragments allocated through
++distinct dp_rxdma_ring instances can no longer share backing pages
++with one another or with CE allocations.  A monitor-destination path
++that intentionally reuses the data ring also reuses that ring's cache.
++This does not address lifetime stranding within one ring, so the live
++memory benefit must be measured separately.
++
++The existing alignment code calls skb_pull() on an empty skb, so a
++positive alignment delta is rejected and the data pointer does not move.
++Use skb_reserve() while the skb is still empty; the existing extra 128
++allocation bytes retain at least DP_RX_BUFFER_SIZE bytes of DMA tailroom.
++
++The refill paths already serialize each cache with the corresponding
++SRNG lock.  Quiesce HIF IRQ and NAPI processing before crash
++reconfiguration tears down the data path.  The preceding IRQ lifecycle
++patch makes this safe when suspend or reset has already disabled them.
++Drain the cache only after all ring-owned skbs have been unmapped and
++freed and the IDR is destroyed.
++
++Tested-on: IPQ8074 hw2.0 WLAN.HK.2.9.0.1-02146-QCAHKSWPL_SILICONZ-1
++Signed-off-by: Mark Ruvald Pedersen <wabsie@gmail.com>
++---
++ drivers/net/wireless/ath/ath11k/core.c  |  2 ++
++ drivers/net/wireless/ath/ath11k/dp.h    |  2 ++
++ drivers/net/wireless/ath/ath11k/dp_rx.c | 47 ++++++++++++++++++++----
++ 3 files changed, 45 insertions(+), 8 deletions(-)
++
++--- a/drivers/net/wireless/ath/ath11k/core.c
+++++ b/drivers/net/wireless/ath/ath11k/core.c
++@@ -2363,6 +2363,8 @@ static int ath11k_core_reconfigure_on_crash(struct ath11k_base *ab)
++ {
++ 	int ret;
++ 
+++	ath11k_hif_irq_disable(ab);
+++
++ 	mutex_lock(&ab->core_lock);
++ 	ath11k_thermal_unregister(ab);
++ 	ath11k_dp_pdev_free(ab);
++
++--- a/drivers/net/wireless/ath/ath11k/dp.h
+++++ b/drivers/net/wireless/ath/ath11k/dp.h
++@@ -7,6 +7,7 @@
++ #ifndef ATH11K_DP_H
++ #define ATH11K_DP_H
++ 
+++#include <linux/mm_types.h>
++ #include "hal_rx.h"
++ 
++ #define MAX_RXDMA_PER_PDEV     2
++@@ -72,6 +73,7 @@
++ 
++ struct dp_rxdma_ring {
++ 	struct dp_srng refill_buf_ring;
+++	struct page_frag_cache frag_cache;
++ 	struct idr bufs_idr;
++ 	/* Protects bufs_idr */
++ 	spinlock_t idr_lock;
++--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
+++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
++@@ -4,10 +4,12 @@
++  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
++  */
++ 
+++#include <linux/gfp.h>
++ #include <linux/fips.h>
++ #include <linux/ieee80211.h>
++ #include <linux/kernel.h>
++ #include <linux/skbuff.h>
+++#include <net/sock.h>
++ #include "core.h"
++ #include "debug.h"
++ #include "debugfs_htt_stats.h"
++@@ -340,6 +342,35 @@
++ 	return -ETIMEDOUT;
++ }
++ 
+++static struct sk_buff *
+++ath11k_dp_rx_alloc_skb(struct dp_rxdma_ring *rx_ring, unsigned int len)
+++{
+++	struct page_frag_cache *cache = &rx_ring->frag_cache;
+++	gfp_t gfp_mask = GFP_ATOMIC | __GFP_NOWARN;
+++	struct sk_buff *skb;
+++	void *data;
+++
+++	len += NET_SKB_PAD;
+++	len = SKB_HEAD_ALIGN(len);
+++
+++	if (sk_memalloc_socks())
+++		gfp_mask |= __GFP_MEMALLOC;
+++
+++	/* Refill paths serialize the per-ring cache with the SRNG lock. */
+++	data = page_frag_alloc(cache, len, gfp_mask);
+++	if (!data)
+++		return NULL;
+++	skb = build_skb(data, len);
+++	if (!skb) {
+++		page_frag_free(data);
+++		return NULL;
+++	}
+++
+++	skb_reserve(skb, NET_SKB_PAD);
+++
+++	return skb;
+++}
+++
++ /* Returns number of Rx buffers replenished */
++ int ath11k_dp_rxbufs_replenish(struct ath11k_base *ab, int mac_id,
++ 			       struct dp_rxdma_ring *rx_ring,
++@@ -371,8 +402,8 @@
++ 	num_remain = req_entries;
++ 
++ 	while (num_remain > 0) {
++-		skb = dev_alloc_skb(DP_RX_BUFFER_SIZE +
++-				    DP_RX_BUFFER_ALIGN_SIZE);
+++		skb = ath11k_dp_rx_alloc_skb(rx_ring, DP_RX_BUFFER_SIZE +
+++					     DP_RX_BUFFER_ALIGN_SIZE);
++ 		if (!skb)
++ 			break;
++ 
++@@ -379,7 +410,7 @@ int ath11k_dp_rxbufs_replenish(struct ath11k_base *ab, int mac_id,
++ 		if (!IS_ALIGNED((unsigned long)skb->data,
++ 				DP_RX_BUFFER_ALIGN_SIZE)) {
++-			skb_pull(skb,
++-				 PTR_ALIGN(skb->data, DP_RX_BUFFER_ALIGN_SIZE) -
++-				 skb->data);
+++			skb_reserve(skb,
+++				    PTR_ALIGN(skb->data, DP_RX_BUFFER_ALIGN_SIZE) -
+++				    skb->data);
++ 		}
++ 
++@@ -453,6 +484,8 @@
++ 	idr_destroy(&rx_ring->bufs_idr);
++ 	spin_unlock_bh(&rx_ring->idr_lock);
++ 
+++	page_frag_cache_drain(&rx_ring->frag_cache);
+++
++ 	return 0;
++ }
++ 
++@@ -2838,8 +2871,8 @@
++ 	struct sk_buff *skb;
++ 	dma_addr_t paddr;
++ 
++-	skb = dev_alloc_skb(DP_RX_BUFFER_SIZE +
++-			    DP_RX_BUFFER_ALIGN_SIZE);
+++	skb = ath11k_dp_rx_alloc_skb(rx_ring, DP_RX_BUFFER_SIZE +
+++				     DP_RX_BUFFER_ALIGN_SIZE);
++ 
++ 	if (!skb)
++ 		goto fail_alloc_skb;
++@@ -2846,7 +2879,7 @@ static struct sk_buff *ath11k_dp_rx_alloc_mon_status_buf(struct ath11k_base *ab,
++ 
++ 	if (!IS_ALIGNED((unsigned long)skb->data,
++ 			DP_RX_BUFFER_ALIGN_SIZE)) {
++-		skb_pull(skb, PTR_ALIGN(skb->data, DP_RX_BUFFER_ALIGN_SIZE) -
+++		skb_reserve(skb, PTR_ALIGN(skb->data, DP_RX_BUFFER_ALIGN_SIZE) -
++ 			 skb->data);
++ 	}
++ 
+-- 
+2.47.3
+
