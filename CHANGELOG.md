@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are named after their build date.
 
+## [Unreleased]
+
+### Fixed
+
+- Wired traffic stalling until reboot: the EDMA Ethernet driver woke the Tx
+  queue numbered after the current CPU instead of the queue of the completed
+  ring, so queues 1-3 never restarted after filling (patch `0004`).
+
 ## [v2026.11.11] - 2026-11-11
 
 ### Added

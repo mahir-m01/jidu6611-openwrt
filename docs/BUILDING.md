@@ -65,6 +65,7 @@ pinned commit and applies the patches again before building.
 | `0001-qualcommbe-add-JioRouter-AX6000-JIDU6J11.patch` | openwrt/openwrt#26498 (Sahil Bakshi) |
 | `0002-mac80211-ath11k-isolate-RXDMA-page-frag-caches.patch` | openwrt/openwrt#24254 (Mark Ruvald Pedersen), renumbered and refreshed |
 | `0003-qualcommbe-jidu6j11-accept-upgrades-from-the-communi.patch` | This repository |
+| `0004-qualcommbe-edma-wake-the-Tx-queue-of-the-completed-r.patch` | This repository |
 
 ## Updating to a newer OpenWrt
 

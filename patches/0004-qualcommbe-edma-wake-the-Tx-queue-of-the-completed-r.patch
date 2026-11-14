@@ -1,0 +1,92 @@
+From 6578ea45335eb088bfc5ea8bebe696348883dc44 Mon Sep 17 00:00:00 2001
+From: mahir-m01 <mahirabd.official@gmail.com>
+Date: Sat, 14 Nov 2026 12:26:44 +0000
+Subject: [PATCH] qualcommbe: edma: wake the Tx queue of the completed ring
+
+The EDMA driver stops Tx queue N when Tx ring N runs out of descriptors,
+but wakes the queue numbered after the CPU that handles the completion.
+All Tx completion IRQs run on CPU0 by default, so only queue 0 is ever
+woken. Once ring 1, 2 or 3 fills, for example when Wi-Fi clients send
+faster than a 100 Mbit/s uplink, that queue stays stopped and the flows
+hashed to it stall until reboot, with nothing logged.
+
+Wake the queue that belongs to the completion ring.
+
+Reproduced on the JIDU6411 by sending 400 Mbit/s of UDP over its
+100 Mbit/s uplink: queues 1-3 kept about 2000 packets of backlog
+indefinitely and 6 of 8 new TCP connections failed. Pinning each
+completion IRQ to its own CPU (the condition the old code relies on)
+cleared it on both units under the same load.
+
+Signed-off-by: mahir-m01 <mahirabd.official@gmail.com>
+---
+ ...e-the-Tx-queue-of-the-completed-ring.patch | 57 +++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+ create mode 100644 target/linux/qualcommbe/patches-6.18/0450-net-ethernet-qualcomm-edma-wake-the-Tx-queue-of-the-completed-ring.patch
+
+diff --git a/target/linux/qualcommbe/patches-6.18/0450-net-ethernet-qualcomm-edma-wake-the-Tx-queue-of-the-completed-ring.patch b/target/linux/qualcommbe/patches-6.18/0450-net-ethernet-qualcomm-edma-wake-the-Tx-queue-of-the-completed-ring.patch
+new file mode 100644
+index 0000000000..188874795e
+--- /dev/null
++++ b/target/linux/qualcommbe/patches-6.18/0450-net-ethernet-qualcomm-edma-wake-the-Tx-queue-of-the-completed-ring.patch
+@@ -0,0 +1,57 @@
++From: mahir-m01 <mahirabd.official@gmail.com>
++Subject: [PATCH] net: ethernet: qualcomm: edma: wake the Tx queue of the completed ring
++
++edma_port_xmit() fills Tx ring N from Tx queue N and stops that queue
++when the ring has no free descriptors. edma_tx_complete() then wakes the
++queue numbered after the CPU it runs on. The two only match when every
++Tx completion IRQ is pinned to its own CPU. With the default affinity
++all completion IRQs are handled on CPU0, so only queue 0 is ever woken;
++once ring 1, 2 or 3 fills (any burst above the line rate, e.g. Wi-Fi
++clients behind a 100 Mbit/s uplink) that queue stays stopped and the
++flows hashed to it stall until reboot, without any log message.
++
++Wake the queue that belongs to the completion ring instead.
++
++Reproduced on IPQ9574 (JioRouter AX6000) by sending 400 Mbit/s of UDP
++over a 100 Mbit/s link: before, queues 1-3 kept ~2000 packets of backlog
++forever and 6 of 8 new TCP connections failed; after, all queues drain
++and every connection succeeds.
++
++Signed-off-by: mahir-m01 <mahirabd.official@gmail.com>
++---
++--- a/drivers/net/ethernet/qualcomm/ppe/edma_tx.c	2026-11-14 12:25:40.327478921 +0000
+++++ b/drivers/net/ethernet/qualcomm/ppe/edma_tx.c	2026-11-14 12:25:40.342729346 +0000
++@@ -100,7 +100,7 @@
++ 	struct edma_txcmpl_stats *txcmpl_stats = &txcmpl_ring->txcmpl_stats;
++ 	struct ppe_device *ppe_dev = edma_ctx->ppe_dev;
++ 	struct regmap *regmap = ppe_dev->regmap;
++-	u32 cons_idx, end_idx, data, cpu_id;
+++	u32 cons_idx, end_idx, data, cpu_id, queue_id;
++ 	struct device *dev = ppe_dev->dev;
++ 	u32 avail, count, txcmpl_errors;
++ 	struct edma_txcmpl_desc *txcmpl;
++@@ -212,14 +212,22 @@
++ 	/* If tx_requeue_stop disabled (tx_requeue_stop = 0)
++ 	 * Fetch the tx queue of interface and check if it is stopped.
++ 	 * if queue is stopped and interface is up, wake up this queue.
+++	 *
+++	 * Completion ring N serves Tx ring N, which edma_port_xmit() fills
+++	 * from Tx queue N % num_possible_cpus(). Wake that queue rather than
+++	 * the one numbered after the CPU running this poll: the two only match
+++	 * when every completion IRQ is pinned to its own CPU, and otherwise a
+++	 * queue stopped on a full ring is never woken and stalls for good.
++ 	 */
++ 	if (unlikely(!edma_ctx->tx_requeue_stop)) {
++ 		cpu_id = smp_processor_id();
++-		nq = netdev_get_tx_queue(txcmpl_ring->napi.dev, cpu_id);
+++		queue_id = (txcmpl_ring - edma_ctx->txcmpl_rings) %
+++			   num_possible_cpus();
+++		nq = netdev_get_tx_queue(txcmpl_ring->napi.dev, queue_id);
++ 		if (unlikely(netif_tx_queue_stopped(nq)) &&
++ 		    netif_carrier_ok(txcmpl_ring->napi.dev)) {
++ 			dev_dbg(dev, "Waking queue number %d, for interface %s\n",
++-				cpu_id, txcmpl_ring->napi.dev->name);
+++				queue_id, txcmpl_ring->napi.dev->name);
++ 			__netif_tx_lock(nq, cpu_id);
++ 			netif_tx_wake_queue(nq);
++ 			__netif_tx_unlock(nq);
+-- 
+2.47.3
+

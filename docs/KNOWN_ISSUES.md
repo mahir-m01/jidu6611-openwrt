@@ -32,6 +32,45 @@ uci commit wireless && wifi reload
 802.11k (`ieee80211k`) and 802.11v (`bss_transition`) are not affected.
 Together with `usteer`, they are enough to move clients between access points.
 
+## Wired traffic stalls until reboot (EDMA Tx queues)
+
+**Symptom.** Part of the traffic leaving an Ethernet port stops and does not
+recover. New connections fail at random, roughly one in four per stuck
+queue, while ping may still work. Nothing is logged. The port's Tx qdisc
+shows a backlog that never drains (normally `0p`):
+
+```
+tc -s qdisc show dev wan | grep backlog
+ backlog 0b 0p requeues 0
+ backlog 430378b 1458p requeues 7
+ backlog 344550b 1455p requeues 5
+```
+
+It occurs when a burst arrives faster than the port can send, for example
+Wi-Fi clients uploading over a 100 Mbit/s uplink. It was reproduced on a
+JIDU6411 by sending 400 Mbit/s of UDP over its 100 Mbit/s uplink.
+
+**Cause.** The EDMA driver stops Tx queue N when Tx ring N has no free
+descriptors. After Tx completion it wakes the queue numbered after the CPU
+that handled the completion, not queue N. Every Tx completion interrupt runs
+on CPU0 by default, so only queue 0 is ever restarted.
+
+**Fix.** Patch `0004` wakes the queue that belongs to the completed ring. It
+is included from the release after v2026.11.11.
+
+**Workaround for v2026.11.11.** Pin each Tx completion interrupt to its own
+CPU so the two numbers match. Save this as `/etc/edma-txcmpl-affinity.sh`,
+make it executable, call it from `/etc/rc.local` before `exit 0`, add it to
+`/etc/sysupgrade.conf` and reboot:
+
+```sh
+#!/bin/sh
+awk '/txcmpl_/ { sub(":", "", $1); split($NF, a, "_"); print $1, a[2] % 4 }' /proc/interrupts |
+while read -r irq cpu; do
+	echo "$cpu" > "/proc/irq/$irq/smp_affinity_list"
+done
+```
+
 ## 2.4 GHz stops passing traffic (community firmware)
 
 **Symptom.** On a JIDU6411 running the community firmware
@@ -41,13 +80,13 @@ beaconing and accepting associations. Clients completed the 4-way handshake
 but obtained no DHCP lease, and most disconnected within 20 to 30 seconds.
 The 5 GHz radio was not affected, and a reboot restored service.
 
-**Status.** This firmware replaces every component involved: the upstream
-IPQ9574 ath11k support and firmware, the secure PIL loader, and the RXDMA
-page-frag fix. Whether that resolves the issue is under observation. A similar
-report for the IPQ5018 AHB radio is
-[openwrt/openwrt#22583](https://github.com/openwrt/openwrt/issues/22583).
-There, unbinding and rebinding the Wi-Fi platform device restores the radio
-without a reboot.
+**Status.** The symptoms match the
+[wired Tx queue stall](#wired-traffic-stalls-until-reboot-edma-tx-queues): the
+same unit later showed stuck uplink queues in all four stalls it logged,
+including one where its 2.4 GHz clients lost connectivity. Which clients are
+affected depends on which queue their traffic hashes to, so one band can look
+dead while the other works. That stall is the most likely cause. If you still see this with patch `0004`
+or the workaround applied, please report it.
 
 **If you see it**, record the uptime and attach the output of the following
 to an issue:

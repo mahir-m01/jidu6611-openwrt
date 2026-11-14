@@ -125,9 +125,13 @@ where you use it. Background and measurements are in
 
 - **802.11r fast roaming disconnects clients on ath11k.** Disable it
   (`ieee80211r '0'`). 802.11k and 802.11v work.
+- **Wired traffic stalls until reboot after a burst.** An Ethernet driver
+  bug leaves Tx queues stopped once they fill, typically on a 100 Mbit/s
+  link. Fixed by patch `0004` (next release). On v2026.11.11, apply the
+  IRQ affinity workaround.
 - **2.4 GHz stopped passing traffic after about a day on the community
-  firmware.** This firmware replaces every component involved. Whether that
-  resolves it is under observation.
+  firmware.** The symptoms match the wired stall above, which is the most
+  likely cause.
 - **Kernel modules from `downloads.openwrt.org` do not match this kernel.**
   Install them from the release's `kmods` archive instead.
 - **Memory headroom is limited.** The device has 512 MB of RAM, and both
